@@ -1,0 +1,93 @@
+---
+title: "Course Project Machine Learning"
+author: "Cindy Lubbers-Benning"
+date: "Sunday, January 18, 2015"
+output: html_document
+---
+# Summary
+We had to prepare the data before we could use it. We trained a random forest model and used cross validation to estimate the out-of-sample accuracy and pick the model with the highest out-of-sample accuracy.The true out-of-sample accuracy (unbiased) was, calculated on an until then unused test set, 0.9983431, a very good model. 
+
+# Analysis
+First read in the train data (the test data contains 20 cases for the programming assignment)
+```{r}
+data <- read.csv('pml-training.csv')
+```
+
+Split the data into a training and testing set
+```{r}
+#set a seed to produce the same results over and over again
+set.seed(998)
+library(caret)
+inTrain <- createDataPartition(y=data$classe,
+                              p=0.6, list=FALSE)
+training <- data[inTrain,]
+testing <- data[-inTrain,]
+```
+
+Look at the data by using the summary function (do not use the testing set!)
+```{r}
+summary(training)
+```
+
+A lot of features only have values if new_window is yes. On top of that there are some divisions by zero. So, many numerical features are interpreted as factor features. And those factor features contain a lot of missings (19216 of 19622, 98% missing). Let's just skip those features. We also drop the feature new_window. 
+
+Also drop X (the first feature), this contains the rownumber. As classe is also ordered by rownumber, this feature will be an almost perfect predictor. Nevertheless, a useless predictor. You never want to use features like rownumber, because they are not generalisable on a new dataset. The next plot shows the dependence. 
+
+```{r}
+qplot(classe,X, data= training)
+
+#some more suspicious features
+featurePlot(x=training[,c("raw_timestamp_part_1","num_window")],
+            y = training$classe,
+            plot="pairs",  auto.key = list(columns = 5))
+
+#find the factor features
+factor_cols <- vapply(training, is.factor, logical(1))
+#Create a new dataset "data_new" that doesn't contain the factor features
+training_new <- training[,-which(factor_cols)]
+training_new <- training_new[,-1]
+
+# Replace the remaining missings using knnImpute
+pre_Obj <- preProcess(training_new,method = c("knnImpute") )
+training_new_imp <- predict(pre_Obj,training_new)
+
+# Now add the features user_name and Classe again (knnImpute can only handle numerical inputs)
+training_new_imp$user_name <- training$user_name
+training_new_imp$classe <- training$classe
+
+# The sum of missings shows all missing values are imputed, as we wished
+sum(is.na(training_new_imp))
+```
+
+Build a random forest model on the training data created above. We use cross validation to estimate the out-of-sample accuracy. The default is 10 folds. This means that a model was built on ten sets, every time leaving 10% out. On this 10% the accuracy is being calculated ten times.  
+
+```{r}
+#set a seed to produce the same results over and over again
+set.seed(666)
+rfmodelcv <- train(classe~., data = training_new_imp, method = "rf", trControl = trainControl(method = "cv", number = 10))
+rfmodelcv
+#Look at the most important features for the model
+varImp(rfmodelcv)
+```
+
+The average out-of-sample accuracy in the cross validation is reported, namely `r rfmodelcv$results$Accuracy[2]`. This accuracy might be a bit biased, bacause this accuracy was used for model selection (model picked with highest out-of-sample accuracy).  
+
+```{r}
+testing_new <- testing[,-which(factor_cols)]
+testing_new <- testing_new[,-1]
+
+testing_new_imp <- predict(pre_Obj,testing_new)
+
+# Now add the features user_name and Classe again (knnImpute can only handle numerical inputs)
+testing_new_imp$user_name <- testing$user_name
+testing_new_imp$classe <- testing$classe
+
+testingpred <- predict(rfmodelcv, newdata=testing_new_imp)
+
+conf <- confusionMatrix(testingpred, testing_new_imp$classe )
+conf
+```
+
+Therefore we will calculate the true out-of-sample accuracy on the testing set, which is `r conf$overall[1]`. This value is actually very high, so a very good model has been built. We have therefore no reason to assume we dropped too many features. The model generalises very well on the independent test set. This model also predicts the 20 test cases correctly. 
+
+Of course, the out-of-sample accuracy on the testing set is higher than the out-of-sample cross-validated accuracy on the training set. The test set is only one set, with the cross-validation an average of the out-of-sample accuracy is calculated. So this is probably due to coincidence. Nevertheless, the fact remains we built a very good model! 
